@@ -1,21 +1,31 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    if (searchParams.get('registered') === 'true') {
+      setSuccess('Account created successfully! Please log in.');
+    }
+  }, [searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
+
+    console.log('[LOGIN] Attempting login for:', email);
 
     try {
       const result = await signIn("credentials", {
@@ -24,14 +34,19 @@ export default function LoginPage() {
         redirect: false,
       });
 
+      console.log('[LOGIN] Sign in result:', result);
+
       if (result?.error) {
+        console.error('[LOGIN] Login failed:', result.error);
         setError("Invalid email or password");
       } else {
+        console.log('[LOGIN] Login successful, redirecting to dashboard');
         router.push("/dashboard");
         router.refresh();
       }
     } catch (err) {
-      setError("An error occurred. Please try again.");
+      console.error('[LOGIN] Login error:', err);
+      setError(`An error occurred: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
@@ -49,6 +64,11 @@ export default function LoginPage() {
           </p>
         </div>
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+          {success && (
+            <div className="rounded-md bg-green-50 p-4">
+              <div className="text-sm text-green-800">{success}</div>
+            </div>
+          )}
           {error && (
             <div className="rounded-md bg-red-50 p-4">
               <div className="text-sm text-red-800">{error}</div>

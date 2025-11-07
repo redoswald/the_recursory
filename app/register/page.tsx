@@ -17,6 +17,8 @@ export default function RegisterPage() {
     setError("");
     setLoading(true);
 
+    console.log('[REGISTRATION] Submitting registration for:', email);
+
     try {
       const response = await fetch("/api/register", {
         method: "POST",
@@ -26,15 +28,20 @@ export default function RegisterPage() {
         body: JSON.stringify({ email, password, name }),
       });
 
+      console.log('[REGISTRATION] Response status:', response.status);
       const data = await response.json();
+      console.log('[REGISTRATION] Response data:', data);
 
       if (!response.ok) {
+        console.error('[REGISTRATION] Registration failed:', data.error);
         setError(data.error || "Registration failed");
       } else {
+        console.log('[REGISTRATION] Registration successful, redirecting to login');
         router.push("/login?registered=true");
       }
     } catch (err) {
-      setError("An error occurred. Please try again.");
+      console.error('[REGISTRATION] Fetch error:', err);
+      setError(`An error occurred: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setLoading(false);
     }

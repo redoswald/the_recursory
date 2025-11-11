@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { articleQueries } from "@/lib/db";
+import { generateUniqueSlug } from "@/lib/utils";
 
 // Update an article
 export async function PUT(
@@ -26,7 +27,31 @@ export async function PUT(
 
     const { id } = await params;
     const userId = (session.user as any).id;
-    const result = articleQueries.update.run(title, content, slug, id, userId);
+
+    // Get the current article to check its current slug
+    const currentArticle = articleQueries.findById.get(id) as any;
+
+    if (!currentArticle || currentArticle.user_id !== userId) {
+      return NextResponse.json(
+        { error: "Article not found or you don't have permission" },
+        { status: 404 }
+      );
+    }
+
+    // Generate a unique slug if needed, but allow keeping the same slug
+    const uniqueSlug = generateUniqueSlug(
+      slug,
+      (testSlug) => {
+        // If it's the same as the current article's slug, allow it
+        if (testSlug === currentArticle.slug) {
+          return false;
+        }
+        const existing = articleQueries.checkSlugExists.get(testSlug);
+        return !!existing;
+      }
+    );
+
+    const result = articleQueries.update.run(title, content, uniqueSlug, id, userId);
 
     if (result.changes === 0) {
       return NextResponse.json(
@@ -38,12 +63,6 @@ export async function PUT(
     return NextResponse.json({ message: "Article updated successfully" });
   } catch (error: any) {
     console.error("Error updating article:", error);
-    if (error.message?.includes("UNIQUE constraint failed")) {
-      return NextResponse.json(
-        { error: "An article with this slug already exists" },
-        { status: 400 }
-      );
-    }
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }

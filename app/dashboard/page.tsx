@@ -6,6 +6,14 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import dynamic from "next/dynamic";
+import { generateSlug, processWikiLinks, extractReferences } from "@/lib/utils";
+
+const MDEditor = dynamic(
+  () => import("@uiw/react-md-editor").then((mod) => mod.default),
+  { ssr: false }
+);
 
 type Article = {
   id: string;
@@ -28,6 +36,10 @@ export default function DashboardPage() {
   const [editSlug, setEditSlug] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showCitationModal, setShowCitationModal] = useState(false);
+  const [citationUrl, setCitationUrl] = useState("");
+  const [citationTitle, setCitationTitle] = useState("");
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -165,6 +177,138 @@ export default function DashboardPage() {
     setError("");
   };
 
+  const handleAddCitation = () => {
+    if (!citationUrl || !citationTitle) {
+      alert("Please enter both URL and title for the citation");
+      return;
+    }
+
+    // Count existing citations
+    const existingCitations = (editContent.match(/\[\d+\]/g) || []).length;
+    const nextNum = existingCitations + 1;
+
+    // Add inline citation at the end of content or where cursor would be
+    const citation = `[${nextNum}]`;
+
+    // Check if References section exists
+    let newContent = editContent;
+    const referenceLine = `[${nextNum}]: ${citationUrl} "${citationTitle}"`;
+
+    if (newContent.includes("## References")) {
+      // Add to existing References section
+      newContent = newContent + `\n${referenceLine}`;
+    } else {
+      // Create new References section
+      newContent = newContent + `\n\n## References\n${referenceLine}`;
+    }
+
+    // Add the citation marker at the end of the content (before References)
+    const refIndex = newContent.indexOf("## References");
+    if (refIndex > 0) {
+      newContent = newContent.substring(0, refIndex).trimEnd() + ` ${citation}\n\n` + newContent.substring(refIndex);
+    }
+
+    setEditContent(newContent);
+    setShowCitationModal(false);
+    setCitationUrl("");
+    setCitationTitle("");
+  };
+
+  // Filter articles based on search query
+  const filteredArticles = articles.filter((article) => {
+    if (!searchQuery) return true;
+    const query = searchQuery.toLowerCase();
+    return (
+      article.title.toLowerCase().includes(query) ||
+      article.content.toLowerCase().includes(query)
+    );
+  });
+
+  // Find article by title for wiki links
+  const findArticleByTitle = (title: string) => {
+    return articles.find(
+      (article) => article.title.toLowerCase() === title.toLowerCase()
+    );
+  };
+
+  // Custom link component for wiki-style links
+  const WikiLink = ({ href, children, ...props }: any) => {
+    if (href && href.startsWith("#wiki:")) {
+      const articleTitle = decodeURIComponent(href.replace("#wiki:", ""));
+      const linkedArticle = findArticleByTitle(articleTitle);
+
+      const handleClick = (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (linkedArticle) {
+          // Article exists, navigate to it
+          setIsEditing(false);
+          setIsCreating(false);
+          setSelectedArticle(linkedArticle);
+        } else {
+          // Article doesn't exist, prompt to create it
+          if (confirm(`The article "${articleTitle}" doesn't exist yet. Would you like to create it?`)) {
+            setEditTitle(articleTitle);
+            setEditContent("");
+            setEditSlug(generateSlug(articleTitle));
+            setIsCreating(true);
+            setIsEditing(false);
+            setSelectedArticle(null);
+            setError("");
+          }
+        }
+      };
+
+      return (
+        <button
+          type="button"
+          onClick={handleClick}
+          className={`${
+            linkedArticle
+              ? "text-indigo-600 hover:text-indigo-800"
+              : "text-red-600 hover:text-red-800"
+          } underline cursor-pointer bg-transparent border-0 p-0 font-inherit inline`}
+          title={linkedArticle ? `Go to ${articleTitle}` : `Article "${articleTitle}" does not exist - click to create`}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    // Handle anchor links (citations and references)
+    if (href && href.startsWith("#")) {
+      return (
+        <a
+          href={href}
+          className="text-indigo-600 hover:text-indigo-800 underline"
+          onClick={(e) => {
+            e.preventDefault();
+            const element = document.getElementById(href.substring(1));
+            if (element) {
+              element.scrollIntoView({ behavior: "smooth" });
+            }
+          }}
+        >
+          {children}
+        </a>
+      );
+    }
+
+    // Regular links - open external links in new tab, internal links in same tab
+    const isExternal = href && (href.startsWith("http://") || href.startsWith("https://"));
+
+    return (
+      <a
+        href={href}
+        className="text-indigo-600 hover:text-indigo-800 underline"
+        {...(isExternal ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+      >
+        {children}
+      </a>
+    );
+  };
+
   if (status === "loading") {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -207,11 +351,22 @@ export default function DashboardPage() {
                   New
                 </button>
               </div>
+              <div className="mb-4">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search articles..."
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                />
+              </div>
               <div className="space-y-2">
                 {articles.length === 0 ? (
                   <p className="text-sm text-gray-500">No articles yet</p>
+                ) : filteredArticles.length === 0 ? (
+                  <p className="text-sm text-gray-500">No articles match your search</p>
                 ) : (
-                  articles.map((article) => (
+                  filteredArticles.map((article) => (
                     <button
                       key={article.id}
                       onClick={() => {
@@ -252,35 +407,41 @@ export default function DashboardPage() {
                       <input
                         type="text"
                         value={editTitle}
-                        onChange={(e) => setEditTitle(e.target.value)}
+                        onChange={(e) => {
+                          setEditTitle(e.target.value);
+                          setEditSlug(generateSlug(e.target.value));
+                        }}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
                         required
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Slug (URL-friendly identifier)
-                      </label>
-                      <input
-                        type="text"
-                        value={editSlug}
-                        onChange={(e) => setEditSlug(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-                        placeholder="my-article-slug"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Content (Markdown)
-                      </label>
-                      <textarea
-                        value={editContent}
-                        onChange={(e) => setEditContent(e.target.value)}
-                        rows={12}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 font-mono text-sm"
-                        required
-                      />
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="block text-sm font-medium text-gray-700">
+                          Content
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setShowCitationModal(true)}
+                          className="px-3 py-1 text-xs font-medium text-indigo-600 bg-indigo-50 rounded hover:bg-indigo-100"
+                        >
+                          + Add Citation
+                        </button>
+                      </div>
+                      <div data-color-mode="light">
+                        <MDEditor
+                          value={editContent}
+                          onChange={(value) => setEditContent(value || "")}
+                          height={500}
+                          preview="live"
+                          hideToolbar={false}
+                          enableScroll={true}
+                          visibleDragbar={false}
+                          textareaProps={{
+                            placeholder: "Start writing in Markdown... Use the toolbar above for formatting.",
+                          }}
+                        />
+                      </div>
                     </div>
                     <div className="flex gap-2">
                       <button
@@ -311,34 +472,41 @@ export default function DashboardPage() {
                       <input
                         type="text"
                         value={editTitle}
-                        onChange={(e) => setEditTitle(e.target.value)}
+                        onChange={(e) => {
+                          setEditTitle(e.target.value);
+                          setEditSlug(generateSlug(e.target.value));
+                        }}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
                         required
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Slug
-                      </label>
-                      <input
-                        type="text"
-                        value={editSlug}
-                        onChange={(e) => setEditSlug(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Content (Markdown)
-                      </label>
-                      <textarea
-                        value={editContent}
-                        onChange={(e) => setEditContent(e.target.value)}
-                        rows={12}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 font-mono text-sm"
-                        required
-                      />
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="block text-sm font-medium text-gray-700">
+                          Content
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setShowCitationModal(true)}
+                          className="px-3 py-1 text-xs font-medium text-indigo-600 bg-indigo-50 rounded hover:bg-indigo-100"
+                        >
+                          + Add Citation
+                        </button>
+                      </div>
+                      <div data-color-mode="light">
+                        <MDEditor
+                          value={editContent}
+                          onChange={(value) => setEditContent(value || "")}
+                          height={500}
+                          preview="live"
+                          hideToolbar={false}
+                          enableScroll={true}
+                          visibleDragbar={false}
+                          textareaProps={{
+                            placeholder: "Start writing in Markdown... Use the toolbar above for formatting.",
+                          }}
+                        />
+                      </div>
                     </div>
                     <div className="flex gap-2">
                       <button
@@ -384,10 +552,75 @@ export default function DashboardPage() {
                       </button>
                     </div>
                   </div>
-                  <div className="prose max-w-none">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {selectedArticle.content}
+                  <div
+                    className="prose max-w-none"
+                    onClick={(e) => {
+                      const target = e.target as HTMLElement;
+
+                      // Handle citation clicks
+                      const citationRef = target.getAttribute('data-citation-ref');
+                      if (citationRef) {
+                        e.preventDefault();
+                        const element = document.getElementById(`ref-${citationRef}`);
+                        if (element) {
+                          element.scrollIntoView({ behavior: "smooth", block: "center" });
+                        }
+                        return;
+                      }
+
+                      // Handle anchor link clicks
+                      if (target.tagName === 'A' && target.getAttribute('href')?.startsWith('#')) {
+                        e.preventDefault();
+                        const href = target.getAttribute('href');
+                        if (href) {
+                          const element = document.getElementById(href.substring(1));
+                          if (element) {
+                            element.scrollIntoView({ behavior: "smooth", block: "center" });
+                          }
+                        }
+                      }
+                    }}
+                  >
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      rehypePlugins={[rehypeRaw]}
+                      components={{ a: WikiLink as any }}
+                    >
+                      {processWikiLinks(selectedArticle.content)}
                     </ReactMarkdown>
+                    {extractReferences(selectedArticle.content).length > 0 && (
+                      <div className="mt-8 pt-4 border-t border-gray-300">
+                        <h2 className="text-xl font-bold mb-4">References</h2>
+                        <ol className="space-y-2">
+                          {extractReferences(selectedArticle.content).map((ref) => (
+                            <li key={ref.id} id={`ref-${ref.id}`} className="text-sm">
+                              <a
+                                href={ref.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-indigo-600 hover:text-indigo-800"
+                              >
+                                {ref.title}
+                              </a>
+                              {" "}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  const element = document.getElementById(`cite-${ref.id}`);
+                                  if (element) {
+                                    element.scrollIntoView({ behavior: "smooth", block: "center" });
+                                  }
+                                }}
+                                className="text-gray-500 hover:text-gray-700 text-xs bg-transparent border-0 cursor-pointer"
+                              >
+                                ↑
+                              </button>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -399,6 +632,61 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Citation Modal */}
+      {showCitationModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+            <h3 className="text-lg font-semibold mb-4">Add Citation</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Source URL
+                </label>
+                <input
+                  type="url"
+                  value={citationUrl}
+                  onChange={(e) => setCitationUrl(e.target.value)}
+                  placeholder="https://example.com/article"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Source Title
+                </label>
+                <input
+                  type="text"
+                  value={citationTitle}
+                  onChange={(e) => setCitationTitle(e.target.value)}
+                  placeholder="Title of the Article or Source"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-6">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCitationModal(false);
+                  setCitationUrl("");
+                  setCitationTitle("");
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleAddCitation}
+                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700"
+              >
+                Add Citation
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

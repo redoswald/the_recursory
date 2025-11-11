@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tree:*)",
+      "Bash(cd:*)",
+      "Bash(openssl rand -base64 32)",
+      "mcp__playwright__browser_navigate",
+      "Bash(npm install -D @tailwindcss/typography)",
+      "Bash(cd /Users/aaron/Desktop/The\\ Recusory/the_recursory && npm install:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

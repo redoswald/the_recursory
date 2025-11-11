@@ -62,6 +62,14 @@ export const articleQueries = {
     WHERE a.slug = ?
   `),
 
+  checkSlugExists: db.prepare(`
+    SELECT id FROM articles WHERE slug = ?
+  `),
+
+  findById: db.prepare(`
+    SELECT * FROM articles WHERE id = ?
+  `),
+
   findByUserId: db.prepare(`
     SELECT * FROM articles WHERE user_id = ? ORDER BY created_at DESC
   `),

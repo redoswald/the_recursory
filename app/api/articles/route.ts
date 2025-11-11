@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { articleQueries } from "@/lib/db";
 import { generateId } from "@/lib/auth";
+import { generateUniqueSlug } from "@/lib/utils";
 
 // Get all articles for the authenticated user
 export async function GET() {
@@ -47,7 +48,16 @@ export async function POST(request: Request) {
     const userId = (session.user as any).id;
     const articleId = generateId();
 
-    articleQueries.create.run(articleId, title, content, slug, userId);
+    // Generate a unique slug if the provided one already exists
+    const uniqueSlug = generateUniqueSlug(
+      slug,
+      (testSlug) => {
+        const existing = articleQueries.checkSlugExists.get(testSlug);
+        return !!existing;
+      }
+    );
+
+    articleQueries.create.run(articleId, title, content, uniqueSlug, userId);
 
     return NextResponse.json(
       { message: "Article created successfully", id: articleId },
@@ -55,12 +65,6 @@ export async function POST(request: Request) {
     );
   } catch (error: any) {
     console.error("Error creating article:", error);
-    if (error.message?.includes("UNIQUE constraint failed")) {
-      return NextResponse.json(
-        { error: "An article with this slug already exists" },
-        { status: 400 }
-      );
-    }
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }
